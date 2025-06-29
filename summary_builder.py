@@ -184,10 +184,12 @@ class SummaryBuilder(QWidget):
     def add_first_table(self, doc, sorted_data):
         doc.add_heading('Распределение тестовых заданий по компетенциям и дисциплинам', level=2)
 
+        # Создаем таблицу с заголовками
         table = doc.add_table(rows=1, cols=6)
         table.style = 'Table Grid'
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
+        # Заполняем заголовки
         headers = table.rows[0].cells
         headers[0].text = "Код компетенции"
         headers[1].text = "Наименование компетенции"
@@ -196,6 +198,7 @@ class SummaryBuilder(QWidget):
         headers[4].text = "Семестр"
         headers[5].text = "Номер задания"
 
+        # Форматируем заголовки
         for cell in headers:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
@@ -204,43 +207,51 @@ class SummaryBuilder(QWidget):
 
         current_task_num = 1
         comp_row_map = defaultdict(list)
-        row_idx = 1
+        row_idx = 1  # Начинаем с 1, так как 0 - это заголовок
 
+        # Сначала группируем данные по компетенциям
+        comp_groups = defaultdict(list)
         for disc in sorted_data:
-            task_count = self.calculate_task_count(disc['tasks'])
-            new_start = current_task_num
-            new_end = current_task_num + task_count - 1
+            comp_groups[disc['comp_code']].append(disc)
 
-            self.task_mapping[disc['file_path']] = {
-                'discipline': disc['discipline'],
-                'start': new_start,
-                'end': new_end,
-                'tasks': []
-            }
+        # Затем добавляем строки в таблицу
+        for comp_code, disciplines in comp_groups.items():
+            start_row = row_idx
 
-            row_cells = table.add_row().cells
-            row_cells[0].text = disc['comp_code']
-            row_cells[1].text = ""
-            row_cells[2].text = ""
-            row_cells[3].text = disc['discipline']
-            row_cells[4].text = disc['semester']
-            row_cells[5].text = f"{new_start}-{new_end}"
+            # Добавляем все дисциплины для этой компетенции
+            for disc in disciplines:
+                row_cells = table.add_row().cells
+                row_cells[0].text = comp_code if row_idx == start_row else ""
+                row_cells[1].text = ""
+                row_cells[2].text = ""
+                row_cells[3].text = disc['discipline']
+                row_cells[4].text = disc['semester']
 
-            comp_row_map[disc['comp_code']].append(row_idx)
-            row_idx += 1
-            current_task_num = new_end + 1
+                task_count = self.calculate_task_count(disc['tasks'])
+                row_cells[5].text = f"{current_task_num}-{current_task_num + task_count - 1}"
 
-        for comp_code, row_indices in comp_row_map.items():
-            if len(row_indices) > 1:
-                start_row = min(row_indices)
-                end_row = max(row_indices)
+                self.task_mapping[disc['file_path']] = {
+                    'discipline': disc['discipline'],
+                    'start': current_task_num,
+                    'end': current_task_num + task_count - 1,
+                    'tasks': []
+                }
 
-                for col_idx in range(3):
-                    self.merge_cells(table, start_row, end_row, col_idx)
+                current_task_num += task_count
+                row_idx += 1
 
-                    cell = table.cell(start_row, col_idx)
-                    for paragraph in cell.paragraphs:
+            # Объединяем ячейки с кодом компетенции
+            if len(disciplines) > 1:
+                for col in [0, 1, 2]:  # Объединяем первые три колонки
+                    cell_to_merge = table.cell(start_row, col)
+                    for row in range(start_row + 1, row_idx):
+                        cell_to_merge.merge(table.cell(row, col))
+
+                    # Центрируем текст в объединенной ячейке
+                    for paragraph in cell_to_merge.paragraphs:
                         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        return table
 
     def add_second_table(self, doc, sorted_data):
         doc.add_heading('Распределение заданий по типам и уровням сложности', level=2)
@@ -264,18 +275,18 @@ class SummaryBuilder(QWidget):
                     run.bold = True
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-        # Обработка заданий из таблиц
+        # Группируем задания по файлам
         tasks_by_file = defaultdict(list)
         for task in self.all_tasks:
             if not task.get('is_text_section'):
                 tasks_by_file[task['file_path']].append(task)
 
         current_task_num = 1
+
         for disc in sorted_data:
             file_tasks = tasks_by_file.get(disc['file_path'], [])
-            if not file_tasks:
-                continue
 
+            # Добавляем заголовок дисциплины (объединённая строка)
             row = table.add_row().cells
             row[0].merge(row[5])
             row[0].text = disc['discipline']
@@ -284,19 +295,32 @@ class SummaryBuilder(QWidget):
                     run.bold = True
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-            for idx, task in enumerate(file_tasks):
-                new_num = current_task_num + idx
-                self.task_mapping[disc['file_path']]['tasks'].append({
-                    'original_num': task['original_num'],
-                    'new_num': new_num
-                })
+            # Определяем, сколько заданий должно быть (из первой таблицы)
+            task_count_in_first_table = (
+                    self.task_mapping[disc['file_path']]['end'] -
+                    self.task_mapping[disc['file_path']]['start'] + 1
+            )
 
+            # Добавляем задания (либо реальные, либо пустые)
+            for idx in range(task_count_in_first_table):
                 row_cells = table.add_row().cells
-                row_cells[0].text = str(new_num)
-                for i in range(1, min(6, len(task['cells']))):
-                    row_cells[i].text = task['cells'][i]
 
-            current_task_num += len(file_tasks)
+                # Номер задания (сквозная нумерация)
+                new_num = current_task_num + idx
+                row_cells[0].text = str(new_num)
+
+                # Если есть описание задания — заполняем данные
+                if idx < len(file_tasks):
+                    task = file_tasks[idx]
+                    for i in range(1, min(6, len(task['cells']))):
+                        row_cells[i].text = task['cells'][i]
+                else:
+                    # Если описания нет — ставим прочерки
+                    for i in range(1, 6):
+                        row_cells[i].text = "—"
+
+            # Обновляем текущий номер для следующей дисциплины
+            current_task_num += task_count_in_first_table
 
     def add_tasks_list(self, doc, sorted_data):
         doc.add_heading('Перечень заданий', level=2)
