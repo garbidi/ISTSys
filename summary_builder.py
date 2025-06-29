@@ -6,7 +6,6 @@ from collections import defaultdict
 from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
-from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QFileDialog,
@@ -50,7 +49,6 @@ class SummaryBuilder(QWidget):
             self.build_btn.setEnabled(True)
             QMessageBox.information(self, "Успех",
                                     f"Обработано {len(self.summary_data)} дисциплин!\n"
-                                    f"Собрано данных о {len(self.all_tasks)} заданиях!\n"
                                     "Теперь можно построить сводный файл.")
 
     def process_directory(self, dir_path):
@@ -311,7 +309,6 @@ class SummaryBuilder(QWidget):
             doc.add_heading(disc['discipline'], level=3)
 
             for element in source_doc.element.body:
-                # Обработка параграфов
                 if element.tag.endswith('p'):
                     paragraph = Paragraph(element, source_doc)
                     text = paragraph.text.strip()
@@ -321,8 +318,7 @@ class SummaryBuilder(QWidget):
                         continue
 
                     if found_section and text:
-                        # Обработка номеров заданий
-                        match = re.match(r'^(\d+)\.\s*Фабула:', text)
+                        match = re.match(r'^(\d+)\.\s*Инструкция:', text)
                         if match:
                             old_num = match.group(1)
                             new_text = re.sub(r'^(\d+)\.', f'{current_num}.', text, count=1)
@@ -330,7 +326,6 @@ class SummaryBuilder(QWidget):
                             new_paragraph.add_run(new_text).bold = True
                             current_num += 1
                         else:
-                            # Копируем параграф с сохранением форматирования
                             new_paragraph = doc.add_paragraph()
                             for run in paragraph.runs:
                                 new_run = new_paragraph.add_run(run.text)
@@ -340,40 +335,38 @@ class SummaryBuilder(QWidget):
                                 if run.font.size:
                                     new_run.font.size = run.font.size
 
-                # Обработка таблиц
                 elif element.tag.endswith('tbl'):
                     if found_section:
                         table = Table(element, source_doc)
-                        new_table = doc.add_table(rows=1, cols=len(table.columns))
+                        # Создаем таблицу с правильным количеством строк
+                        new_table = doc.add_table(rows=len(table.rows), cols=len(table.columns))
                         new_table.style = 'Table Grid'
 
-                        # Копирование таблицы с сохранением форматирования
-                        for row in table.rows:
-                            new_row = new_table.add_row().cells
-                            for i, cell in enumerate(row.cells):
-                                new_row[i].text = cell.text
-                                # Копирование форматирования
+                        # Копируем содержимое ячеек
+                        for i, row in enumerate(table.rows):
+                            for j, cell in enumerate(row.cells):
+                                new_cell = new_table.cell(i, j)
+                                # Очищаем стандартный параграф в новой ячейке
+                                new_cell.text = ''
+                                # Копируем все параграфы из исходной ячейки
                                 for paragraph in cell.paragraphs:
+                                    new_paragraph = new_cell.add_paragraph()
                                     for run in paragraph.runs:
-                                        new_run = new_row[i].paragraphs[0].add_run(run.text)
+                                        new_run = new_paragraph.add_run(run.text)
                                         new_run.bold = run.bold
                                         new_run.italic = run.italic
                                         new_run.underline = run.underline
                                         if run.font.size:
                                             new_run.font.size = run.font.size
 
-                # Обработка изображений
                 elif element.tag.endswith('drawing'):
                     if found_section:
-                        # Получаем изображение из исходного документа
                         for rel in source_doc.part.rels.values():
                             if "image" in rel.target_ref:
                                 image_part = rel.target_part
                                 image_bytes = image_part.blob
-
-                                # Добавляем изображение в новый документ
                                 doc.add_picture(io.BytesIO(image_bytes))
-                                doc.add_paragraph()  # Добавляем пустой абзац после изображения
+                                doc.add_paragraph()
 
     def merge_cells(self, table, start_row, end_row, col_idx):
         cell_start = table.cell(start_row, col_idx)
