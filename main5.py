@@ -105,7 +105,7 @@ class CompetencyExtractor(QWidget):
         for comp in competencies:
             new_doc = Document()
 
-            # Копируем первую таблицу (заголовок + строка с текущей компетенцией)
+            # 1. Добавляем первую таблицу с компетенцией
             new_table1 = new_doc.add_table(rows=1, cols=len(first_table.columns))
             self.copy_column_widths(first_table, new_table1)
             self.set_table_borders(new_table1)
@@ -117,7 +117,7 @@ class CompetencyExtractor(QWidget):
 
             new_doc.add_paragraph("\n")
 
-            # Копируем вторую таблицу с заданиями по номерам
+            # 2. Добавляем вторую таблицу с заданиями
             task_nums_for_comp = self.extract_task_nums_from_first_table_row(comp['row'])
             new_table2 = new_doc.add_table(rows=1, cols=len(second_table.columns))
             self.copy_column_widths(second_table, new_table2)
@@ -132,7 +132,12 @@ class CompetencyExtractor(QWidget):
 
             new_doc.add_paragraph("\n")
 
-            # Копируем содержимое для текущей компетенции
+            # 3. Добавляем заголовок "Перечень заданий" перед третьим блоком
+            heading = new_doc.add_paragraph("Перечень заданий")
+            heading.style = 'Heading 2'  # Можно использовать другой стиль
+            new_doc.add_paragraph("\n")
+
+            # 4. Копируем содержимое для текущей компетенции
             copying = False
             current_comp_elements = []
 
@@ -152,7 +157,7 @@ class CompetencyExtractor(QWidget):
 
             # Добавляем все собранные элементы в новый документ
             for element in current_comp_elements:
-                new_doc.element.body.append(element)
+                new_doc.element.body.append(deepcopy(element))
 
             # Применяем границы ко всем таблицам в новом документе
             for table in new_doc.tables:
