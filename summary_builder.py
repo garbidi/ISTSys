@@ -8,8 +8,21 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QFileDialog,
-                             QVBoxLayout, QMessageBox, QHBoxLayout)
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.shared import Pt, RGBColor
+from docx.shared import Cm
+from docx.shared import Inches
+from docx.shared import Length
+from docx.shared import Mm
+from docx.shared import Emu
+from docx.shared import Cm
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QPushButton, QFileDialog,
+    QVBoxLayout, QMessageBox, QHBoxLayout, QProgressBar, QLabel, QLineEdit
+)
+
 
 
 class SummaryBuilder(QWidget):
@@ -20,15 +33,33 @@ class SummaryBuilder(QWidget):
         self.summary_data = []
         self.all_tasks = []
         self.task_mapping = {}
+        self.comp_indicators = {}
 
     def init_ui(self):
         self.setWindowTitle("Построение сводного файла компетенций")
-        self.setGeometry(300, 300, 500, 200)
+        self.setGeometry(300, 300, 600, 300)  # чуть увеличим по высоте
 
         layout = QVBoxLayout()
+        input_layout = QHBoxLayout()
+
+        # Метки и поля ввода
+        self.direction_label = QLabel("Направление:")
+        self.direction_input = QLineEdit()
+
+        self.profile_label = QLabel("Профиль:")
+        self.profile_input = QLineEdit()
+
+        self.year_label = QLabel("Год начала подготовки:")
+        self.year_input = QLineEdit()
+
+        input_layout.addWidget(self.direction_label)
+        input_layout.addWidget(self.direction_input)
+        input_layout.addWidget(self.profile_label)
+        input_layout.addWidget(self.profile_input)
+        input_layout.addWidget(self.year_label)
+        input_layout.addWidget(self.year_input)
 
         btn_layout = QHBoxLayout()
-
         self.select_btn = QPushButton("Выбрать папку с компетенциями", self)
         self.select_btn.clicked.connect(self.select_directory)
 
@@ -39,7 +70,16 @@ class SummaryBuilder(QWidget):
         btn_layout.addWidget(self.select_btn)
         btn_layout.addWidget(self.build_btn)
 
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setVisible(False)
+
+        self.status_label = QLabel("", self)
+
+        layout.addLayout(input_layout)
         layout.addLayout(btn_layout)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.status_label)
+
         self.setLayout(layout)
 
     def select_directory(self):
@@ -54,28 +94,58 @@ class SummaryBuilder(QWidget):
     def process_directory(self, dir_path):
         self.summary_data = []
         self.all_tasks = []
+        self.comp_indicators = {}
 
-        for filename in os.listdir(dir_path):
-            if filename.endswith('.docx'):
-                file_path = os.path.join(dir_path, filename)
-                self.process_competency_file(file_path)
+        docx_files = [f for f in os.listdir(dir_path) if f.endswith('.docx')]
+
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(0)  # "неопределенный" режим
+        self.progress_bar.setFormat("Чтение файлов...")
+        self.status_label.setText("")
+        QApplication.processEvents()
+
+        for i, filename in enumerate(docx_files, start=1):
+            self.status_label.setText(f"Обрабатывается файл {i} из {len(docx_files)}: {filename}")
+            QApplication.processEvents()
+            file_path = os.path.join(dir_path, filename)
+            self.process_competency_file(file_path)
+
+        self.progress_bar.setVisible(False)
+        self.status_label.setText("")
 
     def process_competency_file(self, file_path):
         doc = Document(file_path)
         comp_code = os.path.basename(file_path).split('_')[0]
 
-        # Обработка таблиц (если есть)
         if len(doc.tables) >= 2:
             first_table = doc.tables[0]
+
+            indicators_text = ""
+            header_cells = first_table.rows[0].cells
+            indicator_col_idx = None
+            for idx, cell in enumerate(header_cells):
+                if "Наименование индикаторов" in cell.text:
+                    indicator_col_idx = idx
+                    break
+
+            if indicator_col_idx is not None:
+                indicator_parts = []
+                for row in first_table.rows[1:]:
+                    text = row.cells[indicator_col_idx].text.strip()
+                    if text and text not in indicator_parts:
+                        indicator_parts.append(text)
+                indicators_text = "\n".join(indicator_parts).strip()
+
+            if indicators_text:
+                self.comp_indicators[comp_code] = indicators_text
 
             for row_idx, row in enumerate(first_table.rows):
                 if row_idx == 0:
                     continue
-
                 cells = row.cells
                 if len(cells) < 6:
                     continue
-
                 discipline = cells[3].text.strip()
                 semester = cells[4].text.strip()
                 tasks = cells[5].text.strip()
@@ -89,46 +159,36 @@ class SummaryBuilder(QWidget):
                 })
 
             second_table = doc.tables[1]
-
             for row_idx, row in enumerate(second_table.rows):
                 if row_idx == 0:
                     continue
-
                 cells = row.cells
                 if len(cells) < 6:
                     continue
-
                 if re.match(r'^\d+\.', cells[0].text.strip()):
-                    task_data = {
+                    self.all_tasks.append({
                         'file_path': file_path,
                         'original_num': cells[0].text.strip().split('.')[0],
                         'text': cells[0].text.strip(),
                         'cells': [cell.text.strip() for cell in cells]
-                    }
-                    self.all_tasks.append(task_data)
+                    })
 
-        # Обработка раздела "Перечень заданий" в тексте
         tasks_section = []
         found_section = False
-
         for paragraph in doc.paragraphs:
             text = paragraph.text.strip()
-
             if "Перечень заданий" in text:
                 found_section = True
                 continue
+            if found_section and text:
+                tasks_section.append(text)
 
-            if found_section:
-                if text:  # Пропускаем пустые строки
-                    tasks_section.append(text)
-
-        # Сохраняем задания из текстового раздела
         if tasks_section:
             task_text = "\n".join(tasks_section)
             self.all_tasks.append({
                 'file_path': file_path,
                 'text': task_text,
-                'is_text_section': True  # Флаг, что это текстовый раздел
+                'is_text_section': True
             })
 
     def build_summary(self):
@@ -146,50 +206,57 @@ class SummaryBuilder(QWidget):
         )
 
         summary_doc = Document()
-
         self.add_template_header(summary_doc)
         self.add_first_table(summary_doc, sorted_data)
         self.add_second_table(summary_doc, sorted_data)
         self.add_tasks_list(summary_doc, sorted_data)
 
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить сводный файл", "", "Word Files (*.docx)")
-
+            self, "Сохранить сводный файл", "", "Word Files (*.docx)"
+        )
         if save_path:
             summary_doc.save(save_path)
             QMessageBox.information(self, "Готово",
                                     f"Сводный файл успешно создан:\n{save_path}")
 
     def add_template_header(self, doc):
-        doc.add_heading('Фонд оценочных средств', level=1)
+        def add_centered_bold_paragraph(text):
+            p = doc.add_paragraph()
+            p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+            p.paragraph_format.line_spacing = 1  # межстрочный интервал
+            p.paragraph_format.space_before = Pt(0)  # интервал перед
+            p.paragraph_format.space_after = Pt(0)  # интервал после
 
-        p = doc.add_paragraph()
-        p.add_run('для оценки остаточных знаний обучающихся по направлению подготовки').bold = True
+            run = p.add_run(text)
+            run.bold = True
+            font = run.font
+            font.name = 'Times New Roman'
+            font.size = Pt(12)
+            font.color.rgb = RGBColor(0, 0, 0)
+            r = run._element
+            r.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+            return p
 
-        doc.add_paragraph()
-        p = doc.add_paragraph()
-        p.add_run('Направление: ').bold = True
-        p.add_run('')
+        # Заголовок
+        add_centered_bold_paragraph('Фонд оценочных средств')
 
-        p = doc.add_paragraph()
-        p.add_run('Профиль: ').bold = True
-        p.add_run('')
+        # Далее три параграфа с вводом пользователя
+        direction = self.direction_input.text().strip() or "____________________"
+        profile = self.profile_input.text().strip() or "____________________"
+        year = self.year_input.text().strip() or "20__"
 
-        p = doc.add_paragraph()
-        p.add_run('Год начала подготовки -- ').bold = True
-        p.add_run('20__')
-
+        add_centered_bold_paragraph('для оценки остаточных знаний обучающихся по направлению подготовки')
+        add_centered_bold_paragraph(f'Направление: {direction}')
+        add_centered_bold_paragraph(f'Профиль: {profile}')
+        add_centered_bold_paragraph(f'Год начала подготовки – {year}')
         doc.add_paragraph()
 
     def add_first_table(self, doc, sorted_data):
         doc.add_heading('Распределение тестовых заданий по компетенциям и дисциплинам', level=2)
-
-        # Создаем таблицу с заголовками
         table = doc.add_table(rows=1, cols=6)
         table.style = 'Table Grid'
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-        # Заполняем заголовки
         headers = table.rows[0].cells
         headers[0].text = "Код компетенции"
         headers[1].text = "Наименование компетенции"
@@ -198,7 +265,6 @@ class SummaryBuilder(QWidget):
         headers[4].text = "Семестр"
         headers[5].text = "Номер задания"
 
-        # Форматируем заголовки
         for cell in headers:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
@@ -206,24 +272,21 @@ class SummaryBuilder(QWidget):
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         current_task_num = 1
-        comp_row_map = defaultdict(list)
-        row_idx = 1  # Начинаем с 1, так как 0 - это заголовок
-
-        # Сначала группируем данные по компетенциям
         comp_groups = defaultdict(list)
         for disc in sorted_data:
             comp_groups[disc['comp_code']].append(disc)
 
-        # Затем добавляем строки в таблицу
+        row_idx = 1
         for comp_code, disciplines in comp_groups.items():
             start_row = row_idx
-
-            # Добавляем все дисциплины для этой компетенции
             for disc in disciplines:
                 row_cells = table.add_row().cells
                 row_cells[0].text = comp_code if row_idx == start_row else ""
                 row_cells[1].text = ""
-                row_cells[2].text = ""
+                row_cells[2].text = (
+                    self.comp_indicators.get(comp_code, "")
+                    if row_idx == start_row else ""
+                )
                 row_cells[3].text = disc['discipline']
                 row_cells[4].text = disc['semester']
 
@@ -240,18 +303,13 @@ class SummaryBuilder(QWidget):
                 current_task_num += task_count
                 row_idx += 1
 
-            # Объединяем ячейки с кодом компетенции
             if len(disciplines) > 1:
-                for col in [0, 1, 2]:  # Объединяем первые три колонки
+                for col in [0, 1, 2]:
                     cell_to_merge = table.cell(start_row, col)
-                    for row in range(start_row + 1, row_idx):
-                        cell_to_merge.merge(table.cell(row, col))
-
-                    # Центрируем текст в объединенной ячейке
+                    for r in range(start_row + 1, row_idx):
+                        cell_to_merge.merge(table.cell(r, col))
                     for paragraph in cell_to_merge.paragraphs:
                         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        return table
 
     def add_second_table(self, doc, sorted_data):
         doc.add_heading('Распределение заданий по типам и уровням сложности', level=2)
@@ -428,7 +486,6 @@ class SummaryBuilder(QWidget):
             return int(clean_str)
         except ValueError:
             return 0
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

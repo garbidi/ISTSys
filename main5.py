@@ -9,8 +9,9 @@ from docx.oxml.ns import qn
 from openpyxl import Workbook
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QFileDialog,
-    QVBoxLayout, QMessageBox
+    QVBoxLayout, QMessageBox, QProgressBar, QLabel
 )
+from PyQt5.QtCore import Qt
 
 
 class FileValidator:
@@ -57,13 +58,22 @@ class CompetencyExtractor(QWidget):
 
     def init_ui(self):
         self.setWindowTitle("Разделение компетенций Word-файлов")
-        self.setGeometry(300, 300, 400, 150)
+        self.setGeometry(300, 300, 500, 180)
 
         self.button = QPushButton("Выбрать файлы Word (.docx)", self)
         self.button.clicked.connect(self.process_files)
 
+        self.progress = QProgressBar(self)
+        self.progress.setAlignment(Qt.AlignCenter)
+        self.progress.setVisible(False)
+
+        self.status_label = QLabel("", self)
+        self.status_label.setAlignment(Qt.AlignCenter)
+
         layout = QVBoxLayout()
         layout.addWidget(self.button)
+        layout.addWidget(self.progress)
+        layout.addWidget(self.status_label)
         self.setLayout(layout)
 
     def process_files(self):
@@ -85,8 +95,18 @@ class CompetencyExtractor(QWidget):
         ws = wb.active
         ws.append(["Наименование файла", "Тип ошибки", "Строка с ошибкой"])
 
-        for file_path in files:
+        self.progress.setMaximum(len(files))
+        self.progress.setValue(0)
+        self.progress.setVisible(True)
+        self.status_label.setText("Начата обработка файлов...")
+
+        QApplication.processEvents()
+
+        for idx, file_path in enumerate(files, start=1):
             filename = os.path.basename(file_path)
+            self.status_label.setText(f"Обрабатывается файл: {filename}")
+            QApplication.processEvents()
+
             doc = Document(file_path)
 
             for table in doc.tables:
@@ -104,21 +124,24 @@ class CompetencyExtractor(QWidget):
                     ws.append([filename, err["Тип ошибки"], err["Строка"]])
                 shutil.copy(file_path, failed_dir)
 
+            self.progress.setValue(idx)
+            QApplication.processEvents()
+
         wb.save(os.path.join(failed_dir, "Отчет_ошибок.xlsx"))
-        QMessageBox.information(self, "Готово", "Обработка завершена.")
+        self.progress.setVisible(False)
+        self.status_label.setText("Обработка завершена.")
+        QMessageBox.information(self, "Готово", "Все файлы обработаны.")
 
     def process_file(self, original_doc, original_filename, output_dir):
         tables = original_doc.tables
         first_table = tables[0]
         second_table = tables[1]
 
-        # Собираем все компетенции
         competencies = []
         for row in first_table.rows[1:]:
             code = row.cells[0].text.strip().replace(" ", "")
             competencies.append({'code': code, 'row': row})
 
-        # Находим начало Перечня заданий
         per_list_start = None
         for i, para in enumerate(original_doc.paragraphs):
             if "Перечень заданий" in para.text:
@@ -128,11 +151,9 @@ class CompetencyExtractor(QWidget):
         if per_list_start is None:
             raise Exception("Раздел 'Перечень заданий' не найден")
 
-        # Берём все элементы после Перечня заданий
         document_elements = list(original_doc.element.body[per_list_start + 1:])
         competency_code_pattern = re.compile(r'^[A-ZА-Я]+\s*-\s*\d+', re.IGNORECASE)
 
-        # Составляем список номеров заданий из второй таблицы
         task_rows = []
         for row in second_table.rows[1:]:
             num_text = row.cells[0].text.strip()
@@ -142,9 +163,7 @@ class CompetencyExtractor(QWidget):
             except ValueError:
                 continue
 
-        # Проходим по компетенциям
         for comp in competencies:
-            # Выделяем блок элементов для компетенции
             copying = False
             current_elements = []
 
@@ -160,7 +179,7 @@ class CompetencyExtractor(QWidget):
                 if copying:
                     current_elements.append(el)
 
-            # Проверяем количество инструкций
+            # Более гибкая регулярка (учитывает и "35 Инструкция", и "35. Инструкция")
             instruction_pattern = re.compile(r'^(\d+)\.\s*Инструкция:')
             instruction_numbers = []
             for el in current_elements:
@@ -187,10 +206,8 @@ class CompetencyExtractor(QWidget):
                     f"не совпадает с ожидаемым ({expected_count})"
                 )
 
-            # Создаем новый документ для компетенции
             new_doc = Document()
 
-            # Первая таблица
             t1 = new_doc.add_table(rows=1, cols=len(first_table.columns))
             for i, c in enumerate(first_table.rows[0].cells):
                 t1.rows[0].cells[i].text = c.text
@@ -201,7 +218,6 @@ class CompetencyExtractor(QWidget):
 
             new_doc.add_paragraph("\n")
 
-            # Вторая таблица
             nums = list(range(start, end + 1))
             t2 = new_doc.add_table(rows=1, cols=len(second_table.columns))
             for i, c in enumerate(second_table.rows[0].cells):
@@ -218,7 +234,6 @@ class CompetencyExtractor(QWidget):
             heading.style = 'Heading 2'
             new_doc.add_paragraph("\n")
 
-            # Добавляем элементы блока
             for el in current_elements:
                 new_doc.element.body.append(deepcopy(el))
 
