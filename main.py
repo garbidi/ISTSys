@@ -14,6 +14,8 @@ from docx.shared import Pt, RGBColor, Cm, Inches, Length, Mm, Emu
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QFileDialog, QVBoxLayout,
     QMessageBox, QHBoxLayout, QProgressBar, QLabel, QLineEdit, QTabWidget, QFormLayout
@@ -573,13 +575,90 @@ class SummaryBuilderTab(QWidget):
         self.add_second_table(summary_doc, sorted_data)
         self.add_tasks_list(summary_doc, sorted_data)
 
+        # Создаем таблицу сопоставления
+        mapping_data = self.create_mapping_table(sorted_data)
+
         save_path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить сводный файл", "", "Word Files (*.docx)"
         )
         if save_path:
             summary_doc.save(save_path)
-            QMessageBox.information(self, "Готово",
-                                    f"Сводный файл успешно создан:\n{save_path}")
+
+            # Сохраняем таблицу сопоставления в отдельный файл
+            mapping_path = os.path.join(os.path.dirname(save_path),
+                                        "Сопоставление_номеров_заданий.xlsx")
+            self.save_mapping_table(mapping_data, mapping_path)
+
+            QMessageBox.information(
+                self, "Готово",
+                f"Сводный файл успешно создан:\n{save_path}\n\n"
+                f"Таблица сопоставления сохранена:\n{mapping_path}"
+            )
+
+    def create_mapping_table(self, sorted_data):
+        mapping_data = []
+
+        for disc in sorted_data:
+            source_doc = Document(disc['file_path'])
+            found_section = False
+            current_num = self.task_mapping[disc['file_path']]['start']
+            filename = os.path.basename(disc['file_path'])
+
+            for element in source_doc.element.body:
+                if element.tag.endswith('p'):
+                    paragraph = Paragraph(element, source_doc)
+                    text = paragraph.text.strip()
+
+                    if "Перечень заданий" in text:
+                        found_section = True
+                        continue
+
+                    if found_section and text:
+                        match = re.match(r'^(\d+)\.\s*(Инструкция:|Фабула:)', text)
+                        if match:
+                            original_num = match.group(1)
+                            mapping_data.append({
+                                'Исходный файл': filename,
+                                'Исходный номер': original_num,
+                                'Номер в сводном файле': current_num,
+                                'Дисциплина': disc['discipline'],
+                                'Компетенция': disc['comp_code']
+                            })
+                            current_num += 1
+
+        return mapping_data
+
+    def save_mapping_table(self, mapping_data, file_path):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Сопоставление номеров"
+
+        # Заголовки
+        headers = [
+            'Исходный файл',
+            'Исходный номер',
+            'Номер в сводном файле',
+            'Дисциплина',
+            'Компетенция'
+        ]
+        ws.append(headers)
+
+        # Данные
+        for row in mapping_data:
+            ws.append([
+                row['Исходный файл'],
+                row['Исходный номер'],
+                row['Номер в сводном файле'],
+                row['Дисциплина'],
+                row['Компетенция']
+            ])
+
+        # Форматирование
+        for col in range(1, len(headers) + 1):
+            ws.cell(row=1, column=col).font = Font(bold=True)
+            ws.column_dimensions[get_column_letter(col)].width = 25
+
+        wb.save(file_path)
 
     def add_template_header(self, doc):
         def add_centered_bold_paragraph(text):
