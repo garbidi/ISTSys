@@ -185,7 +185,7 @@ class CompetencySplitterTab(QWidget):
                 if copying:
                     current_elements.append(el)
 
-            instruction_pattern = re.compile(r'^(\d+)\.\s*Инструкция:')
+            instruction_pattern = re.compile(r'^(\d+)\.\s*(Инструкция:|Фабула:)')
             instruction_numbers = []
             for el in current_elements:
                 if el.tag.endswith('p'):
@@ -291,32 +291,32 @@ class SummaryBuilderTab(QWidget):
         self.all_tasks = []
         self.task_mapping = {}
         self.comp_indicators = {}
+        self.selected_folder = None
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
 
-        # Вертикальное расположение полей ввода
+        # Форма с полями ввода
         form_layout = QFormLayout()
         form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form_layout.setLabelAlignment(Qt.AlignLeft)
         form_layout.setFormAlignment(Qt.AlignLeft)
         form_layout.setSpacing(15)
 
-        # Основной шрифт для всего интерфейса
+        # Шрифты
         font = QFont()
         font.setFamily("Arial")
         font.setPointSize(12)
 
-        # Шрифт для вводимого текста (еще больше)
         input_font = QFont()
         input_font.setFamily("Arial")
-        input_font.setPointSize(14)  # Увеличенный шрифт для ввода
+        input_font.setPointSize(14)
 
-        # Стиль для полей ввода с увеличенным шрифтом
+        # Стили
         input_style = """
         QLineEdit {
-            font-size: 16px;  /* Еще больше для лучшей читаемости */
+            font-size: 16px;
             padding: 10px;
             min-height: 45px;
             min-width: 400px;
@@ -329,26 +329,6 @@ class SummaryBuilderTab(QWidget):
         }
         """
 
-        # Создаем и настраиваем поля ввода
-        self.direction_input = QLineEdit()
-        self.direction_input.setFont(input_font)  # Устанавливаем увеличенный шрифт
-        self.direction_input.setStyleSheet(input_style)
-
-        self.profile_input = QLineEdit()
-        self.profile_input.setFont(input_font)
-        self.profile_input.setStyleSheet(input_style)
-
-        self.year_input = QLineEdit()
-        self.year_input.setFont(input_font)
-        self.year_input.setStyleSheet(input_style)
-        self.year_input.setMaximumWidth(200)
-
-        # Добавляем поля в форму с метками
-        form_layout.addRow(QLabel("Направление:", font=font), self.direction_input)
-        form_layout.addRow(QLabel("Профиль:", font=font), self.profile_input)
-        form_layout.addRow(QLabel("Год начала подготовки:", font=font), self.year_input)
-
-        # Стиль для кнопок
         button_style = """
         QPushButton {
             font-size: 14px;
@@ -369,23 +349,61 @@ class SummaryBuilderTab(QWidget):
         QPushButton:disabled {
             background-color: #CCD1D9;
         }
+        QPushButton.folder-selected {
+            background-color: #A0D468;
+        }
         """
 
-        # Горизонтальное расположение кнопок
-        btn_layout = QHBoxLayout()
+        # Поля ввода
+        self.direction_input = QLineEdit()
+        self.direction_input.setFont(input_font)
+        self.direction_input.setStyleSheet(input_style)
+
+        self.profile_input = QLineEdit()
+        self.profile_input.setFont(input_font)
+        self.profile_input.setStyleSheet(input_style)
+
+        self.year_input = QLineEdit()
+        self.year_input.setFont(input_font)
+        self.year_input.setStyleSheet(input_style)
+        self.year_input.setMaximumWidth(200)
+
+        form_layout.addRow(QLabel("Направление:", font=font), self.direction_input)
+        form_layout.addRow(QLabel("Профиль:", font=font), self.profile_input)
+        form_layout.addRow(QLabel("Год начала подготовки:", font=font), self.year_input)
+
+        # Кнопка выбора папки и метка пути
         self.select_btn = QPushButton("Выбрать папку с компетенциями")
         self.select_btn.setFont(font)
         self.select_btn.setStyleSheet(button_style)
         self.select_btn.clicked.connect(self.select_directory)
 
+        self.folder_path_label = QLabel("")
+        self.folder_path_label.setFont(font)
+        self.folder_path_label.setWordWrap(True)
+        self.folder_path_label.setStyleSheet("""
+            QLabel {
+                color: #666;
+                font-size: 12px;
+                padding: 8px;
+                border: 1px solid #eee;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+                min-height: 30px;
+            }
+        """)
+
+        folder_selection_layout = QVBoxLayout()
+        folder_selection_layout.addWidget(self.select_btn)
+        folder_selection_layout.addWidget(self.folder_path_label)
+        folder_selection_layout.setSpacing(10)
+
+        # Кнопка построения
         self.build_btn = QPushButton("Построить сводный файл")
         self.build_btn.setFont(font)
         self.build_btn.setStyleSheet(button_style)
         self.build_btn.clicked.connect(self.build_summary)
         self.build_btn.setEnabled(False)
-
-        btn_layout.addWidget(self.select_btn)
-        btn_layout.addWidget(self.build_btn)
 
         # Прогресс-бар
         self.progress_bar = QProgressBar()
@@ -409,13 +427,13 @@ class SummaryBuilderTab(QWidget):
         self.status_label.setFont(font)
         self.status_label.setAlignment(Qt.AlignCenter)
 
-        # Компоновка всех элементов
+        # Компоновка
         layout.addLayout(form_layout)
-        layout.addLayout(btn_layout)
+        layout.addLayout(folder_selection_layout)
+        layout.addWidget(self.build_btn)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
 
-        # Отступы и интервалы
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(25)
 
@@ -424,11 +442,16 @@ class SummaryBuilderTab(QWidget):
     def select_directory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Выберите папку с файлами компетенций")
         if dir_path:
-            self.process_directory(dir_path)
+            self.selected_folder = dir_path
+            self.select_btn.setProperty("class", "folder-selected")
+            self.select_btn.style().polish(self.select_btn)
+            self.select_btn.setText("✓ Папка выбрана")
+            self.folder_path_label.setText(f"Выбрано: {dir_path}")
             self.build_btn.setEnabled(True)
+            self.process_directory(dir_path)
             QMessageBox.information(self, "Успех",
-                                    f"Обработано {len(self.summary_data)} дисциплин!\n"
-                                    "Теперь можно построить сводный файл.")
+                                  f"Обработано {len(self.summary_data)} дисциплин!\n"
+                                  "Теперь можно построить сводный файл.")
 
     def process_directory(self, dir_path):
         self.summary_data = []
@@ -439,7 +462,7 @@ class SummaryBuilderTab(QWidget):
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(0)  # "неопределенный" режим
+        self.progress_bar.setMaximum(0)
         self.progress_bar.setFormat("Чтение файлов...")
         self.status_label.setText("")
         QApplication.processEvents()
@@ -594,6 +617,7 @@ class SummaryBuilderTab(QWidget):
         table.style = 'Table Grid'
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
+        # Заголовки таблицы (выравнивание по центру)
         headers = table.rows[0].cells
         headers[0].text = "Код компетенции"
         headers[1].text = "Наименование компетенции"
@@ -604,9 +628,9 @@ class SummaryBuilderTab(QWidget):
 
         for cell in headers:
             for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
                 for run in paragraph.runs:
                     run.bold = True
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         current_task_num = 1
         comp_groups = defaultdict(list)
@@ -630,6 +654,11 @@ class SummaryBuilderTab(QWidget):
                 task_count = self.calculate_task_count(disc['tasks'])
                 row_cells[5].text = f"{current_task_num}-{current_task_num + task_count - 1}"
 
+                # Выравнивание всего текста в ячейках по левому краю
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+
                 self.task_mapping[disc['file_path']] = {
                     'discipline': disc['discipline'],
                     'start': current_task_num,
@@ -646,7 +675,7 @@ class SummaryBuilderTab(QWidget):
                     for r in range(start_row + 1, row_idx):
                         cell_to_merge.merge(table.cell(r, col))
                     for paragraph in cell_to_merge.paragraphs:
-                        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
 
     def add_second_table(self, doc, sorted_data):
         doc.add_heading('Распределение заданий по типам и уровням сложности', level=2)
@@ -656,6 +685,7 @@ class SummaryBuilderTab(QWidget):
         table.style = 'Table Grid'
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
+        # Заголовки таблицы (выравнивание по центру)
         headers = table.rows[0].cells
         headers[0].text = "№ задания"
         headers[1].text = "Верный ответ"
@@ -666,9 +696,9 @@ class SummaryBuilderTab(QWidget):
 
         for cell in headers:
             for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
                 for run in paragraph.runs:
                     run.bold = True
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         tasks_by_file = defaultdict(list)
         for task in self.all_tasks:
@@ -678,16 +708,16 @@ class SummaryBuilderTab(QWidget):
         current_task_num = 1
 
         for disc in sorted_data:
-            file_tasks = tasks_by_file.get(disc['file_path'], [])
-
+            # Заголовок дисциплины (выравнивание по центру)
             row = table.add_row().cells
             row[0].merge(row[5])
             row[0].text = disc['discipline']
             for paragraph in row[0].paragraphs:
+                paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
                 for run in paragraph.runs:
                     run.bold = True
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+            file_tasks = tasks_by_file.get(disc['file_path'], [])
             task_count_in_first_table = (
                     self.task_mapping[disc['file_path']]['end'] -
                     self.task_mapping[disc['file_path']]['start'] + 1
@@ -705,6 +735,11 @@ class SummaryBuilderTab(QWidget):
                 else:
                     for i in range(1, 6):
                         row_cells[i].text = "—"
+
+                # Выравнивание всего текста в ячейках по левому краю
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
 
             current_task_num += task_count_in_first_table
 
@@ -728,7 +763,7 @@ class SummaryBuilderTab(QWidget):
                         continue
 
                     if found_section and text:
-                        match = re.match(r'^(\d+)\.\s*Инструкция:', text)
+                        match = re.match(r'^(\d+)\.\s*(Инструкция:|Фабула:)', text)
                         if match:
                             old_num = match.group(1)
                             new_text = re.sub(r'^(\d+)\.', f'{current_num}.', text, count=1)
